@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Peer-to-Peer Video + Screen + Audio + Controls</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+      Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    background-color: #f0f2f5;
+    color: #333;
+    margin: 0;
+    padding: 20px;
+  }
+
+  h1 {
+    text-align: center;
+    color: #222;
+    margin-bottom: 30px;
+  }
+
+  .videos-section {
+    display: flex;
+    justify-content: center;
+    gap: 25px;
+    margin-bottom: 25px;
+  }
+
+  video {
+    width: 320px;
+    height: 180px;
+    background-color: #000;
+    border-radius: 8px;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+    object-fit: cover;
+  }
+
+  .section-title {
+    margin-left: 10px;
+    margin-bottom: 12px;
+    font-weight: 700;
+    font-size: 1.3rem;
+    color: #444;
+  }
+
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 30px;
+  }
+
+  button {
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    background-color: #4a90e2;
+    color: white;
+    box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
+    transition: background-color 0.25s ease;
+  }
+  button:hover {
+    background-color: #357abd;
+  }
+
+  textarea {
+    width: 100%;
+    max-width: 700px;
+    min-height: 80px;
+    resize: vertical;
+    font-family: monospace;
+    font-size: 0.9rem;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    margin: 8px 0 18px 0;
+  }
+
+  .signaling-step {
+    max-width: 720px;
+    margin: 0 auto 25px auto;
+    background: white;
+    padding: 20px 24px;
+    border-radius: 8px;
+    box-shadow: 0 6px 15px rgb(0 0 0 / 0.1);
+  }
+
+  .signaling-step b {
+    font-size: 1.1rem;
+    color: #222;
+  }
+
+  @media (max-width: 750px) {
+    .videos-section {
+      flex-direction: column;
+      align-items: center;
+    }
+
+    video {
+      width: 90vw;
+      height: auto;
+    }
+
+    textarea {
+      width: 90vw;
+    }
+  }
+</style>
+</head>
+<body>
+  <h1>Peer-to-Peer Video + Screen + Audio + Controls</h1>
+
+  <div>
+    <div class="section-title">Local Streams</div>
+    <div class="videos-section">
+      <video id="localCamera" autoplay playsinline muted></video>
+      <video id="localScreen" autoplay playsinline muted></video>
+    </div>
+  </div>
+
+  <div>
+    <div class="section-title">Remote Streams</div>
+    <div class="videos-section">
+      <video id="remoteCamera" autoplay playsinline></video>
+      <video id="remoteScreen" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="toggleVideoBtn">Turn Video Off</button>
+    <button id="toggleAudioBtn">Mute Audio</button>
+  </div>
+
+  <div class="signaling-step">
+    <p><b>Step 1 (Host):</b> Click "Create Offer" and send the offer to remote:</p>
+    <button id="createOffer">Create Offer</button>
+    <textarea id="localOffer" placeholder="Local Offer (auto-filled)"></textarea>
+  </div>
+
+  <div class="signaling-step">
+    <p><b>Step 2 (Remote):</b> Paste host offer and accept it:</p>
+    <textarea id="remoteOffer" placeholder="Remote Offer"></textarea>
+    <button id="acceptOffer">Accept Offer</button>
+  </div>
+
+  <div class="signaling-step">
+    <p><b>Step 3 (Remote):</b> Copy this answer back to host:</p>
+    <textarea id="localAnswer" placeholder="Local Answer (auto-filled)"></textarea>
+  </div>
+
+  <div class="signaling-step">
+    <p><b>Step 4 (Host):</b> Paste answer from remote and accept:</p>
+    <textarea id="remoteAnswer" placeholder="Remote Answer"></textarea>
+    <button id="acceptAnswer">Accept Answer</button>
+  </div>
+
+<script>
+'use strict';
+
+const localCamera = document.getElementById('localCamera');
+const localScreen = document.getElementById('localScreen');
+const remoteCamera = document.getElementById('remoteCamera');
+const remoteScreen = document.getElementById('remoteScreen');
+
+const createOfferBtn = document.getElementById('createOffer');
+const acceptOfferBtn = document.getElementById('acceptOffer');
+const acceptAnswerBtn = document.getElementById('acceptAnswer');
+
+const localOfferTextarea = document.getElementById('localOffer');
+const remoteOfferTextarea = document.getElementById('remoteOffer');
+const localAnswerTextarea = document.getElementById('localAnswer');
+const remoteAnswerTextarea = document.getElementById('remoteAnswer');
+
+const toggleVideoBtn = document.getElementById('toggleVideoBtn');
+const toggleAudioBtn = document.getElementById('toggleAudioBtn');
+
+const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+let peerConnection = new RTCPeerConnection(servers);
+
+let localStreamCamera;
+let localStreamScreen;
+let videoEnabled = true;
+let audioEnabled = true;
+
+async function startLocalStreams() {
+  try {
+    localStreamCamera = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localCamera.srcObject = localStreamCamera;
+
+    localStreamScreen = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    localScreen.srcObject = localStreamScreen;
+
+    localStreamCamera.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStreamCamera);
+    });
+
+    localStreamScreen.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStreamScreen);
+    });
+
+    console.log('Camera and mic ready.');
+    console.log('Screen sharing ready.');
+
+  } catch (err) {
+    console.error('Error accessing media devices.', err);
+  }
+}
+
+let remoteCameraStream = new MediaStream();
+let remoteScreenStream = new MediaStream();
+
+peerConnection.addEventListener('track', event => {
+  const track = event.track;
+
+  if (track.kind === 'video') {
+    if (track.label.toLowerCase().includes('screen') || track.label.toLowerCase().includes('display')) {
+      if (!remoteScreenStream.getTracks().find(t => t.id === track.id)) {
+        remoteScreenStream.addTrack(track);
+        remoteScreen.srcObject = remoteScreenStream;
+      }
+    } else {
+      if (!remoteCameraStream.getTracks().find(t => t.id === track.id)) {
+        remoteCameraStream.addTrack(track);
+        remoteCamera.srcObject = remoteCameraStream;
+      }
+    }
+  }
+
+  if (track.kind === 'audio') {
+    if (!remoteCameraStream.getTracks().find(t => t.id === track.id)) {
+      remoteCameraStream.addTrack(track);
+      remoteCamera.srcObject = remoteCameraStream;
+    }
+  }
+  console.log('Remote track added:', track.kind, track.label);
+});
+
+peerConnection.addEventListener('icecandidate', event => {
+  if (event.candidate === null) {
+    if (peerConnection.localDescription) {
+      if (peerConnection.localDescription.type === 'offer') {
+        localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
+      } else if (peerConnection.localDescription.type === 'answer') {
+        localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
+      }
+    }
+  }
+});
+
+async function createOffer() {
+  try {
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
+    console.log('Offer created and set locally.');
+  } catch (err) {
+    alert('Error creating offer: ' + err.message);
+    console.error(err);
+  }
+}
+
+async function acceptOffer() {
+  try {
+    const offer = JSON.parse(remoteOfferTextarea.value);
+    await peerConnection.setRemoteDescription(offer);
+    console.log('Remote offer set.');
+
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
+    console.log('Answer created and set locally.');
+  } catch (err) {
+    alert('Error accepting offer: ' + err.message);
+    console.error(err);
+  }
+}
+
+async function acceptAnswer() {
+  try {
+    const answer = JSON.parse(remoteAnswerTextarea.value);
+
+    if (peerConnection.signalingState !== 'have-local-offer') {
+      alert('Cannot accept answer now, peer connection is in state: ' + peerConnection.signalingState);
+      return;
+    }
+
+    await peerConnection.setRemoteDescription(answer);
+    console.log('Remote answer set.');
+  } catch (err) {
+    alert('Error accepting answer: ' + err.message);
+    console.error(err);
+  }
+}
+
+function toggleVideo() {
+  if (!localStreamCamera) return;
+  videoEnabled = !videoEnabled;
+  localStreamCamera.getVideoTracks().forEach(track => track.enabled = videoEnabled);
+  toggleVideoBtn.textContent = videoEnabled ? 'Turn Video Off' : 'Turn Video On';
+}
+
+function toggleAudio() {
+  if (!localStreamCamera) return;
+  audioEnabled = !audioEnabled;
+  localStreamCamera.getAudioTracks().forEach(track => track.enabled = audioEnabled);
+  toggleAudioBtn.textContent = audioEnabled ? 'Mute Audio' : 'Unmute Audio';
+}
+
+createOfferBtn.onclick = createOffer;
+acceptOfferBtn.onclick = acceptOffer;
+acceptAnswerBtn.onclick = acceptAnswer;
+toggleVideoBtn.onclick = toggleVideo;
+toggleAudioBtn.onclick = toggleAudio;
+
+startLocalStreams();
+</script>
+</body>
+</html>
