@@ -1,283 +1,211 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Peer-to-Peer Video + Screen + Audio + Controls</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-      Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-    background-color: #f0f2f5;
-    color: #333;
-    margin: 0;
-    padding: 20px;
-  }
-
-  h1 {
-    text-align: center;
-    color: #222;
-    margin-bottom: 20px;
-  }
-
-  .videos-section {
-    display: flex;
-    justify-content: center;
-    gap: 15px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-  }
-
-  video {
-    width: 320px;
-    max-width: 90vw;
-    max-height: 40vh;
-    background-color: #000;
-    border-radius: 8px;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
-    object-fit: cover;
-  }
-
-  .controls {
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin: 15px 0 25px 0;
-  }
-
-  button {
-    padding: 10px 18px;
-    font-size: 1rem;
-    font-weight: 600;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    background-color: #4a90e2;
-    color: white;
-    box-shadow: 0 4px 10px rgba(74, 144, 226, 0.4);
-    transition: background-color 0.25s ease;
-  }
-  button:hover {
-    background-color: #357abd;
-  }
-
-  textarea {
-    width: 100%;
-    max-width: 700px;
-    min-height: 80px;
-    resize: vertical;
-    font-family: monospace;
-    font-size: 0.9rem;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid #ccc;
-    margin: 8px 0 18px 0;
-  }
-
-  .signaling-step {
-    max-width: 720px;
-    margin: 0 auto 25px auto;
-    background: white;
-    padding: 20px 24px;
-    border-radius: 8px;
-    box-shadow: 0 6px 15px rgb(0 0 0 / 0.1);
-  }
-
-  .signaling-step b {
-    font-size: 1.1rem;
-    color: #222;
-  }
-</style>
-</head>
-<body>
-  <h1>Peer-to-Peer Video + Screen + Audio</h1>
-
-  <!-- Start button (important for mobile autoplay policies) -->
-  <div class="controls">
-    <button id="startBtn">Start Camera & Mic</button>
-  </div>
-
-  <div>
-    <div class="section-title">Local Streams</div>
-    <div class="videos-section">
-      <video id="localCamera" autoplay playsinline muted></video>
-      <video id="localScreen" autoplay playsinline muted></video>
-    </div>
-  </div>
-
-  <div>
-    <div class="section-title">Remote Streams</div>
-    <div class="videos-section">
-      <video id="remoteCamera" autoplay playsinline></video>
-      <video id="remoteScreen" autoplay playsinline></video>
-    </div>
-  </div>
-
-  <div class="controls">
-    <button id="toggleVideoBtn" disabled>Turn Video Off</button>
-    <button id="toggleAudioBtn" disabled>Mute Audio</button>
-  </div>
-
-  <div class="signaling-step">
-    <p><b>Step 1 (Host):</b> Click "Create Offer" and send the offer to remote:</p>
-    <button id="createOffer" disabled>Create Offer</button>
-    <textarea id="localOffer" placeholder="Local Offer (auto-filled)"></textarea>
-  </div>
-
-  <div class="signaling-step">
-    <p><b>Step 2 (Remote):</b> Paste host offer and accept it:</p>
-    <textarea id="remoteOffer" placeholder="Remote Offer"></textarea>
-    <button id="acceptOffer" disabled>Accept Offer</button>
-  </div>
-
-  <div class="signaling-step">
-    <p><b>Step 3 (Remote):</b> Copy this answer back to host:</p>
-    <textarea id="localAnswer" placeholder="Local Answer (auto-filled)"></textarea>
-  </div>
-
-  <div class="signaling-step">
-    <p><b>Step 4 (Host):</b> Paste answer from remote and accept:</p>
-    <textarea id="remoteAnswer" placeholder="Remote Answer"></textarea>
-    <button id="acceptAnswer" disabled>Accept Answer</button>
-  </div>
-
-<script>
-'use strict';
-
-const localCamera = document.getElementById('localCamera');
-const localScreen = document.getElementById('localScreen');
-const remoteCamera = document.getElementById('remoteCamera');
-const remoteScreen = document.getElementById('remoteScreen');
-
-const startBtn = document.getElementById('startBtn');
-const createOfferBtn = document.getElementById('createOffer');
-const acceptOfferBtn = document.getElementById('acceptOffer');
-const acceptAnswerBtn = document.getElementById('acceptAnswer');
-
-const localOfferTextarea = document.getElementById('localOffer');
-const remoteOfferTextarea = document.getElementById('remoteOffer');
-const localAnswerTextarea = document.getElementById('localAnswer');
-const remoteAnswerTextarea = document.getElementById('remoteAnswer');
-
-const toggleVideoBtn = document.getElementById('toggleVideoBtn');
-const toggleAudioBtn = document.getElementById('toggleAudioBtn');
-
-const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-let peerConnection;
-let localStreamCamera;
-let localStreamScreen;
-let videoEnabled = true;
-let audioEnabled = true;
-
-let remoteCameraStream = new MediaStream();
-let remoteScreenStream = new MediaStream();
-
-async function startLocalStreams() {
-  try {
-    peerConnection = new RTCPeerConnection(servers);
-
-    // camera + mic
-    localStreamCamera = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localCamera.srcObject = localStreamCamera;
-
-    localStreamCamera.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localStreamCamera);
-    });
-
-    // screen (if supported)
-    if (navigator.mediaDevices.getDisplayMedia) {
-      try {
-        localStreamScreen = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        localScreen.srcObject = localStreamScreen;
-        localStreamScreen.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStreamScreen);
-        });
-      } catch (err) {
-        console.warn("Screen share denied or not started:", err);
-      }
-    } else {
-      console.warn("Screen sharing not supported on this device.");
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P2P Zoom-Style Call</title>
+  <style>
+    body { 
+      font-family: system-ui, sans-serif; 
+      background: #111; 
+      color: white;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      text-align: center;
+      padding: 10px;
+      background: #222;
+      font-weight: bold;
+    }
+    .videos {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+      padding: 5px;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 8px;
+      background: black;
+    }
+    /* Floating bottom bar */
+    .controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px;
+      gap: 15px;
+    }
+    .control-btn {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: none;
+      font-size: 22px;
+      font-weight: bold;
+      cursor: pointer;
+      background: #444;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: 0.2s;
+    }
+    .control-btn.active { background: #0077ff; }
+    .control-btn.danger { background: #e53935; }
+    .control-btn:hover { opacity: 0.9; }
+    textarea {
+      width: 100%;
+      height: 60px;
+      font-family: monospace;
+      font-size: 12px;
+      margin: 5px 0;
+    }
+    .signaling {
+      background: #222;
+      padding: 8px;
     }
 
-    peerConnection.addEventListener('track', event => {
-      const track = event.track;
-      if (track.kind === 'video') {
-        if (track.label.toLowerCase().includes('screen') || track.label.toLowerCase().includes('display')) {
-          remoteScreenStream.addTrack(track);
-          remoteScreen.srcObject = remoteScreenStream;
+    /* 📱 Mobile adjustments */
+    @media (max-width: 768px) {
+      .videos { grid-template-columns: 1fr; }
+      .control-btn { width: 50px; height: 50px; font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>Zoom-Style P2P Call</header>
+
+  <div class="videos">
+    <video id="localVideo" autoplay playsinline muted></video>
+    <video id="localScreen" autoplay playsinline muted></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="remoteScreen" autoplay playsinline></video>
+  </div>
+
+  <!-- Floating controls -->
+  <div class="controls">
+    <button id="btnCamera" class="control-btn active" onclick="toggleCamera()">📷</button>
+    <button id="btnMic" class="control-btn active" onclick="toggleMic()">🎤</button>
+    <button id="btnScreen" class="control-btn" onclick="toggleScreen()">🖥️</button>
+  </div>
+
+  <!-- Manual signaling (hidden in real app, but needed here) -->
+  <div class="signaling">
+    <button onclick="createOffer()">Create Offer (Host)</button>
+    <button onclick="acceptOffer()">Accept Offer / Answer</button>
+    <textarea id="localSDP" placeholder="Your SDP will appear here"></textarea>
+    <textarea id="remoteSDP" placeholder="Paste remote SDP here"></textarea>
+  </div>
+
+  <script>
+    const localVideo = document.getElementById("localVideo");
+    const localScreen = document.getElementById("localScreen");
+    const remoteVideo = document.getElementById("remoteVideo");
+    const remoteScreen = document.getElementById("remoteScreen");
+
+    const localSDP = document.getElementById("localSDP");
+    const remoteSDP = document.getElementById("remoteSDP");
+
+    const btnCamera = document.getElementById("btnCamera");
+    const btnMic = document.getElementById("btnMic");
+    const btnScreen = document.getElementById("btnScreen");
+
+    const pc = new RTCPeerConnection();
+    let camStream, screenStream;
+    let micEnabled = true;
+    let camEnabled = true;
+
+    // === Handle incoming remote tracks ===
+    pc.ontrack = (event) => {
+      if (event.track.kind === "video") {
+        if (!remoteVideo.srcObject) {
+          remoteVideo.srcObject = event.streams[0];
         } else {
-          remoteCameraStream.addTrack(track);
-          remoteCamera.srcObject = remoteCameraStream;
+          remoteScreen.srcObject = event.streams[0];
         }
+      } else if (event.track.kind === "audio") {
+        const audio = document.createElement("audio");
+        audio.srcObject = event.streams[0];
+        audio.autoplay = true;
       }
-      if (track.kind === 'audio') {
-        remoteCameraStream.addTrack(track);
-        remoteCamera.srcObject = remoteCameraStream;
-      }
-    });
+    };
 
-    peerConnection.addEventListener('icecandidate', event => {
-      if (event.candidate === null && peerConnection.localDescription) {
-        if (peerConnection.localDescription.type === 'offer') {
-          localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
-        } else if (peerConnection.localDescription.type === 'answer') {
-          localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
+    // === Camera toggle ===
+    async function toggleCamera() {
+      if (!camStream) {
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localVideo.srcObject = camStream;
+          camStream.getTracks().forEach(track => pc.addTrack(track, camStream));
+          camEnabled = true;
+          btnCamera.classList.add("active");
+        } catch (err) {
+          console.error("Camera error:", err);
         }
+        return;
       }
-    });
 
-    // enable controls
-    createOfferBtn.disabled = false;
-    acceptOfferBtn.disabled = false;
-    acceptAnswerBtn.disabled = false;
-    toggleVideoBtn.disabled = false;
-    toggleAudioBtn.disabled = false;
+      camEnabled = !camEnabled;
+      camStream.getVideoTracks().forEach(track => track.enabled = camEnabled);
+      btnCamera.classList.toggle("active", camEnabled);
+    }
 
-  } catch (err) {
-    console.error('Error accessing media devices:', err);
-    alert('Could not start camera/microphone: ' + err.message);
-  }
-}
+    // === Mic toggle ===
+    function toggleMic() {
+      if (!camStream) {
+        alert("Start the camera first!");
+        return;
+      }
+      micEnabled = !micEnabled;
+      camStream.getAudioTracks().forEach(track => track.enabled = micEnabled);
+      btnMic.classList.toggle("active", micEnabled);
+    }
 
-async function createOffer() {
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-}
+    // === Screen toggle ===
+    async function toggleScreen() {
+      if (!screenStream) {
+        try {
+          screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+          localScreen.srcObject = screenStream;
+          screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
+          btnScreen.classList.add("active");
+          screenStream.getVideoTracks()[0].onended = () => toggleScreen(); // auto-stop if user ends share
+        } catch (err) {
+          console.error("Screen share error:", err);
+        }
+      } else {
+        screenStream.getTracks().forEach(track => track.stop());
+        localScreen.srcObject = null;
+        screenStream = null;
+        btnScreen.classList.remove("active");
+      }
+    }
 
-async function acceptOffer() {
-  const offer = JSON.parse(remoteOfferTextarea.value);
-  await peerConnection.setRemoteDescription(offer);
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
-}
+    // === Offer / Answer flow ===
+    async function createOffer() {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      localSDP.value = JSON.stringify(offer);
+    }
 
-async function acceptAnswer() {
-  const answer = JSON.parse(remoteAnswerTextarea.value);
-  await peerConnection.setRemoteDescription(answer);
-}
-
-function toggleVideo() {
-  if (!localStreamCamera) return;
-  videoEnabled = !videoEnabled;
-  localStreamCamera.getVideoTracks().forEach(track => track.enabled = videoEnabled);
-  toggleVideoBtn.textContent = videoEnabled ? 'Turn Video Off' : 'Turn Video On';
-}
-
-function toggleAudio() {
-  if (!localStreamCamera) return;
-  audioEnabled = !audioEnabled;
-  localStreamCamera.getAudioTracks().forEach(track => track.enabled = audioEnabled);
-  toggleAudioBtn.textContent = audioEnabled ? 'Mute Audio' : 'Unmute Audio';
-}
-
-// event listeners
-startBtn.onclick = startLocalStreams;
-createOfferBtn.onclick = createOffer;
-acceptOfferBtn.onclick = acceptOffer;
-acceptAnswerBtn.onclick = acceptAnswer;
-toggleVideoBtn.onclick = toggleVideo;
-toggleAudioBtn.onclick = toggleAudio;
-</script>
+    async function acceptOffer() {
+      const sdp = JSON.parse(remoteSDP.value);
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      if (sdp.type === "offer") {
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        localSDP.value = JSON.stringify(answer);
+      }
+    }
+  </script>
 </body>
 </html>
