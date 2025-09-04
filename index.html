@@ -17,38 +17,33 @@
   h1 {
     text-align: center;
     color: #222;
-    margin-bottom: 30px;
+    margin-bottom: 20px;
   }
 
   .videos-section {
     display: flex;
     justify-content: center;
-    gap: 25px;
-    margin-bottom: 25px;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
   }
 
   video {
     width: 320px;
-    height: 180px;
+    max-width: 90vw;
+    max-height: 40vh;
     background-color: #000;
     border-radius: 8px;
     box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
     object-fit: cover;
   }
 
-  .section-title {
-    margin-left: 10px;
-    margin-bottom: 12px;
-    font-weight: 700;
-    font-size: 1.3rem;
-    color: #444;
-  }
-
   .controls {
     display: flex;
     justify-content: center;
-    gap: 15px;
-    margin-bottom: 30px;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 15px 0 25px 0;
   }
 
   button {
@@ -93,26 +88,15 @@
     font-size: 1.1rem;
     color: #222;
   }
-
-  @media (max-width: 750px) {
-    .videos-section {
-      flex-direction: column;
-      align-items: center;
-    }
-
-    video {
-      width: 90vw;
-      height: auto;
-    }
-
-    textarea {
-      width: 90vw;
-    }
-  }
 </style>
 </head>
 <body>
-  <h1>Peer-to-Peer Video + Screen + Audio + Controls</h1>
+  <h1>Peer-to-Peer Video + Screen + Audio</h1>
+
+  <!-- Start button (important for mobile autoplay policies) -->
+  <div class="controls">
+    <button id="startBtn">Start Camera & Mic</button>
+  </div>
 
   <div>
     <div class="section-title">Local Streams</div>
@@ -131,20 +115,20 @@
   </div>
 
   <div class="controls">
-    <button id="toggleVideoBtn">Turn Video Off</button>
-    <button id="toggleAudioBtn">Mute Audio</button>
+    <button id="toggleVideoBtn" disabled>Turn Video Off</button>
+    <button id="toggleAudioBtn" disabled>Mute Audio</button>
   </div>
 
   <div class="signaling-step">
     <p><b>Step 1 (Host):</b> Click "Create Offer" and send the offer to remote:</p>
-    <button id="createOffer">Create Offer</button>
+    <button id="createOffer" disabled>Create Offer</button>
     <textarea id="localOffer" placeholder="Local Offer (auto-filled)"></textarea>
   </div>
 
   <div class="signaling-step">
     <p><b>Step 2 (Remote):</b> Paste host offer and accept it:</p>
     <textarea id="remoteOffer" placeholder="Remote Offer"></textarea>
-    <button id="acceptOffer">Accept Offer</button>
+    <button id="acceptOffer" disabled>Accept Offer</button>
   </div>
 
   <div class="signaling-step">
@@ -155,7 +139,7 @@
   <div class="signaling-step">
     <p><b>Step 4 (Host):</b> Paste answer from remote and accept:</p>
     <textarea id="remoteAnswer" placeholder="Remote Answer"></textarea>
-    <button id="acceptAnswer">Accept Answer</button>
+    <button id="acceptAnswer" disabled>Accept Answer</button>
   </div>
 
 <script>
@@ -166,6 +150,7 @@ const localScreen = document.getElementById('localScreen');
 const remoteCamera = document.getElementById('remoteCamera');
 const remoteScreen = document.getElementById('remoteScreen');
 
+const startBtn = document.getElementById('startBtn');
 const createOfferBtn = document.getElementById('createOffer');
 const acceptOfferBtn = document.getElementById('acceptOffer');
 const acceptAnswerBtn = document.getElementById('acceptAnswer');
@@ -179,122 +164,97 @@ const toggleVideoBtn = document.getElementById('toggleVideoBtn');
 const toggleAudioBtn = document.getElementById('toggleAudioBtn');
 
 const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-let peerConnection = new RTCPeerConnection(servers);
-
+let peerConnection;
 let localStreamCamera;
 let localStreamScreen;
 let videoEnabled = true;
 let audioEnabled = true;
 
+let remoteCameraStream = new MediaStream();
+let remoteScreenStream = new MediaStream();
+
 async function startLocalStreams() {
   try {
+    peerConnection = new RTCPeerConnection(servers);
+
+    // camera + mic
     localStreamCamera = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localCamera.srcObject = localStreamCamera;
-
-    localStreamScreen = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    localScreen.srcObject = localStreamScreen;
 
     localStreamCamera.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStreamCamera);
     });
 
-    localStreamScreen.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localStreamScreen);
-    });
-
-    console.log('Camera and mic ready.');
-    console.log('Screen sharing ready.');
-
-  } catch (err) {
-    console.error('Error accessing media devices.', err);
-  }
-}
-
-let remoteCameraStream = new MediaStream();
-let remoteScreenStream = new MediaStream();
-
-peerConnection.addEventListener('track', event => {
-  const track = event.track;
-
-  if (track.kind === 'video') {
-    if (track.label.toLowerCase().includes('screen') || track.label.toLowerCase().includes('display')) {
-      if (!remoteScreenStream.getTracks().find(t => t.id === track.id)) {
-        remoteScreenStream.addTrack(track);
-        remoteScreen.srcObject = remoteScreenStream;
+    // screen (if supported)
+    if (navigator.mediaDevices.getDisplayMedia) {
+      try {
+        localStreamScreen = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        localScreen.srcObject = localStreamScreen;
+        localStreamScreen.getTracks().forEach(track => {
+          peerConnection.addTrack(track, localStreamScreen);
+        });
+      } catch (err) {
+        console.warn("Screen share denied or not started:", err);
       }
     } else {
-      if (!remoteCameraStream.getTracks().find(t => t.id === track.id)) {
+      console.warn("Screen sharing not supported on this device.");
+    }
+
+    peerConnection.addEventListener('track', event => {
+      const track = event.track;
+      if (track.kind === 'video') {
+        if (track.label.toLowerCase().includes('screen') || track.label.toLowerCase().includes('display')) {
+          remoteScreenStream.addTrack(track);
+          remoteScreen.srcObject = remoteScreenStream;
+        } else {
+          remoteCameraStream.addTrack(track);
+          remoteCamera.srcObject = remoteCameraStream;
+        }
+      }
+      if (track.kind === 'audio') {
         remoteCameraStream.addTrack(track);
         remoteCamera.srcObject = remoteCameraStream;
       }
-    }
-  }
+    });
 
-  if (track.kind === 'audio') {
-    if (!remoteCameraStream.getTracks().find(t => t.id === track.id)) {
-      remoteCameraStream.addTrack(track);
-      remoteCamera.srcObject = remoteCameraStream;
-    }
-  }
-  console.log('Remote track added:', track.kind, track.label);
-});
-
-peerConnection.addEventListener('icecandidate', event => {
-  if (event.candidate === null) {
-    if (peerConnection.localDescription) {
-      if (peerConnection.localDescription.type === 'offer') {
-        localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
-      } else if (peerConnection.localDescription.type === 'answer') {
-        localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
+    peerConnection.addEventListener('icecandidate', event => {
+      if (event.candidate === null && peerConnection.localDescription) {
+        if (peerConnection.localDescription.type === 'offer') {
+          localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
+        } else if (peerConnection.localDescription.type === 'answer') {
+          localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
+        }
       }
-    }
+    });
+
+    // enable controls
+    createOfferBtn.disabled = false;
+    acceptOfferBtn.disabled = false;
+    acceptAnswerBtn.disabled = false;
+    toggleVideoBtn.disabled = false;
+    toggleAudioBtn.disabled = false;
+
+  } catch (err) {
+    console.error('Error accessing media devices:', err);
+    alert('Could not start camera/microphone: ' + err.message);
   }
-});
+}
 
 async function createOffer() {
-  try {
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    localOfferTextarea.value = JSON.stringify(peerConnection.localDescription);
-    console.log('Offer created and set locally.');
-  } catch (err) {
-    alert('Error creating offer: ' + err.message);
-    console.error(err);
-  }
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
 }
 
 async function acceptOffer() {
-  try {
-    const offer = JSON.parse(remoteOfferTextarea.value);
-    await peerConnection.setRemoteDescription(offer);
-    console.log('Remote offer set.');
-
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    localAnswerTextarea.value = JSON.stringify(peerConnection.localDescription);
-    console.log('Answer created and set locally.');
-  } catch (err) {
-    alert('Error accepting offer: ' + err.message);
-    console.error(err);
-  }
+  const offer = JSON.parse(remoteOfferTextarea.value);
+  await peerConnection.setRemoteDescription(offer);
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
 }
 
 async function acceptAnswer() {
-  try {
-    const answer = JSON.parse(remoteAnswerTextarea.value);
-
-    if (peerConnection.signalingState !== 'have-local-offer') {
-      alert('Cannot accept answer now, peer connection is in state: ' + peerConnection.signalingState);
-      return;
-    }
-
-    await peerConnection.setRemoteDescription(answer);
-    console.log('Remote answer set.');
-  } catch (err) {
-    alert('Error accepting answer: ' + err.message);
-    console.error(err);
-  }
+  const answer = JSON.parse(remoteAnswerTextarea.value);
+  await peerConnection.setRemoteDescription(answer);
 }
 
 function toggleVideo() {
@@ -311,13 +271,13 @@ function toggleAudio() {
   toggleAudioBtn.textContent = audioEnabled ? 'Mute Audio' : 'Unmute Audio';
 }
 
+// event listeners
+startBtn.onclick = startLocalStreams;
 createOfferBtn.onclick = createOffer;
 acceptOfferBtn.onclick = acceptOffer;
 acceptAnswerBtn.onclick = acceptAnswer;
 toggleVideoBtn.onclick = toggleVideo;
 toggleAudioBtn.onclick = toggleAudio;
-
-startLocalStreams();
 </script>
 </body>
 </html>
