@@ -60,6 +60,12 @@
         padding: 8px;
         font-size: 14px;
     }
+    #status {
+        text-align: center;
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 10px;
+    }
     @media (max-width: 600px) {
         .video-grid {
             grid-template-columns: 1fr;
@@ -73,10 +79,11 @@
 <body>
 
 <h1>Peer-to-Peer Video + Screen Share</h1>
+<p id="status">Status: Not Connected</p>
 
 <div class="video-grid">
     <div class="video-box">
-        <video id="localVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video>
         <div class="label">Local Camera</div>
     </div>
     <div class="video-box">
@@ -123,7 +130,7 @@
 'use strict';
 
 const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-const offerOptions = { offerToReceiveVideo: 1, offerToReceiveAudio: 1 };
+const offerOptions = { offerToReceiveVideo: true, offerToReceiveAudio: true };
 
 const localVideo = document.getElementById('localVideo');
 const localScreen = document.getElementById('localScreen');
@@ -142,49 +149,125 @@ const acceptAnswer = document.getElementById('acceptAnswer');
 const shareScreenBtn = document.getElementById('shareScreen');
 const muteAudioBtn = document.getElementById('muteAudio');
 
-let peerConnection = new RTCPeerConnection(servers);
-console.log('Created peer connection');
+const statusElement = document.getElementById('status');
 
-let peerMediaStream = new MediaStream();
-peerConnection.addStream(peerMediaStream);
-
-peerConnection.addEventListener('icecandidate', handleConnection);
-peerConnection.addEventListener('addstream', gotRemoteMediaStream);
-
+let pc = new RTCPeerConnection(servers);
 let localStream;
-let audioMuted = false;
 let screenStream;
+let audioMuted = false;
 let isSharingScreen = false;
 
-// 1. Get camera + audio stream
-navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-.then((mediaStream) => {
-    localVideo.srcObject = mediaStream;
-    localStream = mediaStream;
-    for (const track of mediaStream.getTracks()) {
-        peerMediaStream.addTrack(track);
-    }
-})
-.catch(logError);
+function updateStatus(message, color = "#333") {
+    statusElement.textContent = "Status: " + message;
+    statusElement.style.color = color;
+}
 
-// 2. Screen Share Toggle
+// Initial status
+updateStatus("Initializing...");
+
+// Monitor connection state
+pc.onconnectionstatechange = () => {
+    const state = pc.connectionState;
+    if (state === "connected") {
+        updateStatus("Connected ✅", "green");
+    } else if (state === "disconnected" || state === "failed") {
+        updateStatus("Disconnected ❌", "red");
+    } else if (state === "connecting") {
+        updateStatus("Connecting...", "orange");
+    } else {
+        updateStatus(state);
+    }
+};
+
+// Handle remote tracks
+pc.ontrack = (event) => {
+    const stream = event.streams[0];
+    const videoTracks = stream.getVideoTracks();
+
+    if (videoTracks.length > 1) {
+        remoteVideo.srcObject = new MediaStream([videoTracks[0]]);
+        remoteScreen.srcObject = new MediaStream([videoTracks[1]]);
+    } else {
+        remoteVideo.srcObject = stream;
+    }
+};
+
+// ICE candidate handling
+pc.onicecandidate = (event) => {
+    if (event.candidate === null) {
+        const description = pc.localDescription;
+        const json = JSON.stringify(description);
+        if (description.type === 'offer') {
+            localOffer.value = json;
+        } else {
+            localAnswer.value = json;
+        }
+    }
+};
+
+// Get local media
+navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+.then(stream => {
+    updateStatus("Local camera ready", "blue");
+    localStream = stream;
+    localVideo.srcObject = stream;
+
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+})
+.catch(err => {
+    updateStatus("Error: " + err.message, "red");
+});
+
+// Create Offer
+createOffer.addEventListener('click', async () => {
+    updateStatus("Creating offer...", "orange");
+    const offer = await pc.createOffer(offerOptions);
+    await pc.setLocalDescription(offer);
+    updateStatus("Offer created, send it to remote", "blue");
+});
+
+// Accept Offer (Remote)
+acceptOffer.addEventListener('click', async () => {
+    updateStatus("Accepting remote offer...", "orange");
+    const desc = JSON.parse(remoteOffer.value);
+    await pc.setRemoteDescription(desc);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    updateStatus("Answer created, send it to host", "blue");
+});
+
+// Accept Answer (Host)
+acceptAnswer.addEventListener('click', async () => {
+    updateStatus("Accepting answer...", "orange");
+    const desc = JSON.parse(remoteAnswer.value);
+    await pc.setRemoteDescription(desc);
+    updateStatus("Waiting for connection...", "orange");
+});
+
+// Mute / Unmute Audio
+muteAudioBtn.addEventListener('click', () => {
+    if (!localStream) return;
+    audioMuted = !audioMuted;
+    localStream.getAudioTracks().forEach(track => track.enabled = !audioMuted);
+    muteAudioBtn.textContent = audioMuted ? "Unmute" : "Mute";
+});
+
+// Start / Stop Screen Share
 shareScreenBtn.addEventListener('click', async () => {
     if (!isSharingScreen) {
         try {
             screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
             localScreen.srcObject = screenStream;
 
-            for (const track of screenStream.getTracks()) {
-                peerMediaStream.addTrack(track);
-            }
-            shareScreenBtn.textContent = "Stop Screen Share";
-            isSharingScreen = true;
+            screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
 
-            screenStream.getVideoTracks()[0].onended = () => {
-                stopScreenShare();
-            };
+            isSharingScreen = true;
+            shareScreenBtn.textContent = "Stop Screen Share";
+
+            screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
         } catch (err) {
-            logError(err);
+            console.error(err);
         }
     } else {
         stopScreenShare();
@@ -198,88 +281,6 @@ function stopScreenShare() {
     }
     shareScreenBtn.textContent = "Start Screen Share";
     isSharingScreen = false;
-}
-
-// 3. Mute/Unmute Audio
-muteAudioBtn.addEventListener('click', () => {
-    if (!localStream) return;
-    audioMuted = !audioMuted;
-    localStream.getAudioTracks().forEach(track => track.enabled = !audioMuted);
-    muteAudioBtn.textContent = audioMuted ? "Unmute" : "Mute";
-});
-
-// Create Offer
-createOffer.addEventListener('click', () => {
-    peerConnection.createOffer(offerOptions)
-        .then(createdOffer)
-        .catch(logError);
-});
-
-function createdOffer(description) {
-    peerConnection.setLocalDescription(description)
-        .then(() => console.log('Local peer description set'))
-        .catch(logError);
-}
-
-// Accept Offer (Remote)
-acceptOffer.addEventListener('click', () => {
-    const description = JSON.parse(remoteOffer.value);
-    peerConnection.setRemoteDescription(description)
-        .then(() => console.log('Remote peer offer accepted'))
-        .catch(logError);
-
-    peerConnection.createAnswer()
-        .then(createdAnswer)
-        .catch(logError);
-});
-
-function createdAnswer(description) {
-    peerConnection.setLocalDescription(description)
-        .then(() => console.log('Remote peer answered'))
-        .catch(logError);
-}
-
-// Accept Answer (Host)
-acceptAnswer.addEventListener('click', () => {
-    const description = JSON.parse(remoteAnswer.value);
-    peerConnection.setRemoteDescription(description)
-        .then(() => console.log('Local peer remote description set'))
-        .catch(logError);
-});
-
-// Handle ICE
-function handleConnection(event) {
-    const connection = event.target;
-    const iceCandidate = event.candidate;
-
-    if (iceCandidate == null) {
-        const description = connection.localDescription;
-        const descriptionString = JSON.stringify(description);
-
-        if (description.type === 'offer') {
-            localOffer.value = descriptionString;
-        } else {
-            localAnswer.value = descriptionString;
-        }
-    }
-}
-
-// Show Remote Streams
-function gotRemoteMediaStream(event) {
-    const mediaStream = event.stream;
-    console.log('Remote peer connection received remote stream');
-
-    const videoTracks = mediaStream.getVideoTracks();
-    if (videoTracks.length > 1) {
-        remoteVideo.srcObject = new MediaStream([videoTracks[0]]);
-        remoteScreen.srcObject = new MediaStream([videoTracks[1]]);
-    } else {
-        remoteVideo.srcObject = mediaStream;
-    }
-}
-
-function logError(error) {
-    console.error(error);
 }
 </script>
 </body>
